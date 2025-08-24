@@ -1,5 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Lead, LeadStatus, Client, ClientStatus, Project, Package, AddOn, Transaction, TransactionType, PaymentStatus, Profile, Card, FinancialPocket, ContactChannel, PromoCode, ClientType } from '../types';
+import { LeadService } from '../services/leadService';
+import { ClientService } from '../services/clientService';
+import { ProjectService } from '../services/projectService';
+import { TransactionService } from '../services/transactionService';
 import PageHeader from './PageHeader';
 import Modal from './Modal';
 import { PlusIcon, PencilIcon, Trash2Icon, Share2Icon, DownloadIcon, SendIcon, UsersIcon, TargetIcon, TrendingUpIcon, CalendarIcon, MapPinIcon, QrCodeIcon, MessageSquareIcon, CameraIcon, FileTextIcon, PhoneIncomingIcon, LightbulbIcon, ChevronRightIcon, CheckCircleIcon, EyeIcon } from '../constants';
@@ -56,9 +61,11 @@ interface LeadFormProps {
     handleSubmit: (e: React.FormEvent) => void;
     handleCloseModal: () => void;
     modalMode: 'add' | 'edit';
+    isSubmitting: boolean;
+    handleDelete?: () => void;
 }
 
-const LeadForm: React.FC<LeadFormProps> = ({ formData, handleFormChange, handleSubmit, handleCloseModal, modalMode }) => {
+const LeadForm: React.FC<LeadFormProps> = ({ formData, handleFormChange, handleSubmit, handleCloseModal, modalMode, isSubmitting, handleDelete }) => {
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
             <div className="input-group">
@@ -85,9 +92,18 @@ const LeadForm: React.FC<LeadFormProps> = ({ formData, handleFormChange, handleS
                 <textarea id="notes" name="notes" value={formData.notes} onChange={handleFormChange} className="input-field" placeholder=" " rows={4}></textarea>
                 <label htmlFor="notes" className="input-label">Catatan</label>
             </div>
-             <div className="flex justify-end gap-3 pt-4 border-t border-brand-border">
-                <button type="button" onClick={handleCloseModal} className="button-secondary">Batal</button>
-                <button type="submit" className="button-primary">{modalMode === 'add' ? 'Simpan' : 'Update'}</button>
+             <div className="flex justify-between items-center gap-3 pt-4 border-t border-brand-border">
+                <div>
+                    {modalMode === 'edit' && handleDelete && (
+                        <button type="button" onClick={handleDelete} className="button-danger-outline">Hapus</button>
+                    )}
+                </div>
+                <div className="flex gap-3">
+                    <button type="button" onClick={handleCloseModal} className="button-secondary" disabled={isSubmitting}>Batal</button>
+                    <button type="submit" className="button-primary" disabled={isSubmitting}>
+                        {isSubmitting ? 'Menyimpan...' : (modalMode === 'add' ? 'Simpan' : 'Update')}
+                    </button>
+                </div>
             </div>
         </form>
     );
@@ -353,10 +369,12 @@ interface LeadsProps {
     setPockets: React.Dispatch<React.SetStateAction<FinancialPocket[]>>;
     promoCodes: PromoCode[];
     setPromoCodes: React.Dispatch<React.SetStateAction<PromoCode[]>>;
+    vendorId: string | null;
+    reloadData: () => void;
 }
 
 export const Leads: React.FC<LeadsProps> = ({
-    leads, setLeads, clients, setClients, projects, setProjects, packages, addOns, transactions, setTransactions, userProfile, setProfile, showNotification, cards, setCards, pockets, setPockets, promoCodes, setPromoCodes
+    leads, setLeads, clients, setClients, projects, setProjects, packages, addOns, transactions, setTransactions, userProfile, setProfile, showNotification, cards, setCards, pockets, setPockets, promoCodes, setPromoCodes, vendorId, reloadData
 }) => {
     const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -366,6 +384,7 @@ export const Leads: React.FC<LeadsProps> = ({
     const [isShareModalOpen, setIsShareModalOpen] = useState(false);
     const [activeStatModal, setActiveStatModal] = useState<string | null>(null);
     const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [hiddenColumns, setHiddenColumns] = useState<Set<LeadStatus>>(new Set());
     const [searchTerm, setSearchTerm] = useState('');
     const [sourceFilter, setSourceFilter] = useState<ContactChannel | 'all'>('all');
@@ -483,55 +502,145 @@ export const Leads: React.FC<LeadsProps> = ({
         }
     };
     
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (modalMode === 'add' || modalMode === 'edit') {
-            const leadData = { ...formData, id: modalMode === 'add' ? `LEAD-${Date.now()}` : selectedLead!.id };
-            if (modalMode === 'add') setLeads(prev => [leadData, ...prev]);
-            else setLeads(prev => prev.map(l => l.id === selectedLead!.id ? leadData : l));
-            showNotification(modalMode === 'add' ? 'Prospek baru berhasil ditambahkan.' : 'Prospek berhasil diperbarui.');
-        } else if (modalMode === 'convert' && selectedLead) {
-            const selectedPackage = packages.find(p => p.id === formData.packageId);
-            if (!selectedPackage) { alert('Harap pilih paket.'); return; }
-            const selectedAddOns = addOns.filter(addon => formData.selectedAddOnIds.includes(addon.id));
-            const totalBeforeDiscount = selectedPackage.price + selectedAddOns.reduce((sum, addon) => sum + addon.price, 0);
-            let finalDiscountAmount = 0;
-            const promoCode = promoCodes.find(p => p.id === formData.promoCodeId);
-            if (promoCode) {
-                if (promoCode.discountType === 'percentage') { finalDiscountAmount = (totalBeforeDiscount * promoCode.discountValue) / 100; } 
-                else { finalDiscountAmount = promoCode.discountValue; }
-            }
-            const totalProject = totalBeforeDiscount - finalDiscountAmount;
-            const dpAmount = Number(formData.dp) || 0;
-            const newClientId = `CLI${Date.now()}`;
-            const newClient: Client = {
-                id: newClientId, name: formData.clientName, email: formData.email, phone: formData.phone, whatsapp: formData.whatsapp,
-                instagram: '', clientType: ClientType.DIRECT, since: new Date().toISOString(), status: ClientStatus.ACTIVE,
-                lastContact: new Date().toISOString(), portalAccessId: crypto.randomUUID(),
-            };
-            setClients(prev => [newClient, ...prev]);
-            const newProject: Project = {
-                id: `PRJ${Date.now()}`, projectName: `Acara ${formData.clientName}`, clientName: formData.clientName, clientId: newClientId,
-                projectType: formData.projectType, packageName: selectedPackage.name, packageId: selectedPackage.id, addOns: selectedAddOns,
-                date: formData.date, location: formData.location, progress: 10, status: 'Dikonfirmasi', totalCost: totalProject,
-                amountPaid: dpAmount, paymentStatus: dpAmount >= totalProject ? PaymentStatus.LUNAS : (dpAmount > 0 ? PaymentStatus.DP_TERBAYAR : PaymentStatus.BELUM_BAYAR),
-                team: [], notes: formData.notes, promoCodeId: formData.promoCodeId || undefined, discountAmount: finalDiscountAmount > 0 ? finalDiscountAmount : undefined,
-            };
-            setProjects(prev => [newProject, ...prev]);
-            if (dpAmount > 0) {
-                 const newTransaction: Transaction = {
-                    id: `TRN-DP-${newProject.id}`, date: new Date().toISOString(), description: `DP Proyek ${newProject.projectName}`,
-                    amount: dpAmount, type: TransactionType.INCOME, projectId: newProject.id, category: 'DP Proyek',
-                    method: 'Transfer Bank', cardId: formData.dpDestinationCardId,
-                };
-                setTransactions(prev => [...prev, newTransaction].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-                setCards(prev => prev.map(c => c.id === formData.dpDestinationCardId ? {...c, balance: c.balance + dpAmount} : c));
-            }
-            if (promoCode) { setPromoCodes(prev => prev.map(p => p.id === promoCode.id ? { ...p, usageCount: p.usageCount + 1 } : p)); }
-            setLeads(prev => prev.map(l => l.id === selectedLead.id ? { ...l, status: LeadStatus.CONVERTED, notes: `Dikonversi menjadi Klien ID: ${newClientId}` } : l));
-            showNotification(`Prospek ${selectedLead.name} berhasil dikonversi menjadi klien!`);
+        if (isSubmitting) return;
+
+        if (!vendorId) {
+            showNotification('Error: Pengguna tidak terautentikasi.');
+            return;
         }
-        handleCloseModal();
+
+        setIsSubmitting(true);
+        try {
+            if (modalMode === 'add') {
+                const newLeadData: Omit<Lead, 'id'> = {
+                    name: formData.name,
+                    contactChannel: formData.contactChannel,
+                    location: formData.location,
+                    status: LeadStatus.DISCUSSION,
+                    date: new Date().toISOString(),
+                    notes: formData.notes,
+                    whatsapp: formData.whatsapp,
+                };
+                await LeadService.create(newLeadData, vendorId);
+                showNotification('Prospek baru berhasil ditambahkan.');
+
+            } else if (modalMode === 'edit' && selectedLead) {
+                const leadUpdateData: Partial<Lead> = {
+                    name: formData.name,
+                    contactChannel: formData.contactChannel,
+                    location: formData.location,
+                    whatsapp: formData.whatsapp,
+                    notes: formData.notes,
+                };
+                await LeadService.update(selectedLead.id, leadUpdateData);
+                showNotification('Prospek berhasil diperbarui.');
+
+            } else if (modalMode === 'convert' && selectedLead) {
+                const selectedPackage = packages.find(p => p.id === formData.packageId);
+                if (!selectedPackage) {
+                    showNotification('Harap pilih paket layanan.');
+                    setIsSubmitting(false);
+                    return;
+                }
+
+                // 1. Create Client
+                const newClientData: Omit<Client, 'id'> = {
+                    name: formData.clientName,
+                    email: formData.email,
+                    phone: formData.phone,
+                    whatsapp: formData.whatsapp,
+                    instagram: formData.instagram,
+                    clientType: formData.clientType,
+                    since: new Date().toISOString(),
+                    status: ClientStatus.ACTIVE,
+                    lastContact: new Date().toISOString(),
+                    portalAccessId: crypto.randomUUID(),
+                };
+                const newClient = await ClientService.create(newClientData, vendorId);
+
+                // 2. Create Project
+                const selectedAddOns = addOns.filter(addon => formData.selectedAddOnIds.includes(addon.id));
+                const totalBeforeDiscount = selectedPackage.price + selectedAddOns.reduce((sum, addon) => sum + addon.price, 0);
+                let finalDiscountAmount = 0;
+                const promoCode = promoCodes.find(p => p.id === formData.promoCodeId);
+                if (promoCode) {
+                    if (promoCode.discountType === 'percentage') { finalDiscountAmount = (totalBeforeDiscount * promoCode.discountValue) / 100; }
+                    else { finalDiscountAmount = promoCode.discountValue; }
+                }
+                const totalProject = totalBeforeDiscount - finalDiscountAmount;
+                const dpAmount = Number(formData.dp) || 0;
+                const remainingPayment = totalProject - dpAmount;
+
+                const newProjectData: Omit<Project, 'id'> = {
+                    projectName: formData.projectName,
+                    clientName: newClient.name,
+                    clientId: newClient.id,
+                    projectType: formData.projectType,
+                    packageName: selectedPackage.name,
+                    packageId: selectedPackage.id,
+                    addOns: selectedAddOns,
+                    date: formData.date,
+                    location: formData.location,
+                    progress: 10,
+                    status: 'Dikonfirmasi',
+                    totalCost: totalProject,
+                    amountPaid: dpAmount,
+                    paymentStatus: dpAmount >= totalProject ? PaymentStatus.LUNAS : (dpAmount > 0 ? PaymentStatus.DP_TERBAYAR : PaymentStatus.BELUM_BAYAR),
+                    team: [],
+                    notes: formData.notes,
+                    promoCodeId: formData.promoCodeId || undefined,
+                    discountAmount: finalDiscountAmount > 0 ? finalDiscountAmount : undefined,
+                };
+                const newProject = await ProjectService.create(newProjectData, vendorId);
+
+                // 3. Create Transaction if DP exists
+                if (dpAmount > 0 && formData.dpDestinationCardId) {
+                    const newTransactionData: Omit<Transaction, 'id'> = {
+                        date: new Date().toISOString(),
+                        description: `DP Proyek ${newProject.projectName}`,
+                        amount: dpAmount,
+                        type: TransactionType.INCOME,
+                        projectId: newProject.id,
+                        category: 'DP Proyek',
+                        method: 'Transfer Bank',
+                        cardId: formData.dpDestinationCardId,
+                    };
+                    await TransactionService.create(newTransactionData, vendorId);
+                }
+
+                // 4. Update Lead Status
+                await LeadService.update(selectedLead.id, {
+                    status: LeadStatus.CONVERTED,
+                    notes: `Dikonversi menjadi Klien: ${newClient.name} (ID: ${newClient.id})`
+                });
+
+                showNotification(`Prospek ${selectedLead.name} berhasil dikonversi menjadi klien!`);
+            }
+
+            await reloadData();
+            handleCloseModal();
+        } catch (error) {
+            console.error("Failed to save data:", error);
+            showNotification(`Error: Gagal menyimpan data. ${(error as Error).message}`);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleLeadDelete = async (leadId: string) => {
+        if (window.confirm("Apakah Anda yakin ingin menghapus prospek ini? Tindakan ini tidak dapat diurungkan.")) {
+            try {
+                await LeadService.delete(leadId);
+                showNotification("Prospek berhasil dihapus.");
+                handleCloseModal();
+                await reloadData();
+            } catch (error) {
+                console.error("Failed to delete lead:", error);
+                showNotification(`Error: Gagal menghapus prospek. ${(error as Error).message}`);
+            }
+        }
     };
 
     const leadColumns = useMemo(() => {
@@ -587,7 +696,7 @@ export const Leads: React.FC<LeadsProps> = ({
             </div>
             
             <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={modalMode === 'add' ? 'Tambah Prospek Baru' : modalMode === 'edit' ? 'Edit Prospek' : 'Konversi Prospek Menjadi Klien'} size={modalMode === 'convert' ? '4xl' : 'lg'}>
-                {modalMode === 'convert' ? (<ConvertLeadForm formData={formData} handleFormChange={handleFormChange} handleSubmit={handleSubmit} handleCloseModal={handleCloseModal} packages={packages} addOns={addOns} userProfile={userProfile} cards={cards} promoCodes={promoCodes}/>) : (<LeadForm formData={formData} handleFormChange={handleFormChange} handleSubmit={handleSubmit} handleCloseModal={handleCloseModal} modalMode={modalMode}/>)}
+                {modalMode === 'convert' ? (<ConvertLeadForm formData={formData} handleFormChange={handleFormChange} handleSubmit={handleSubmit} handleCloseModal={handleCloseModal} packages={packages} addOns={addOns} userProfile={userProfile} cards={cards} promoCodes={promoCodes}/>) : (<LeadForm formData={formData} handleFormChange={handleFormChange} handleSubmit={handleSubmit} handleCloseModal={handleCloseModal} modalMode={modalMode} isSubmitting={isSubmitting} handleDelete={modalMode === 'edit' && selectedLead ? () => handleLeadDelete(selectedLead.id) : undefined} />)}
             </Modal>
             
             <Modal isOpen={isShareModalOpen} onClose={() => setIsShareModalOpen(false)} title="Bagikan Formulir Prospek Publik" size="sm">

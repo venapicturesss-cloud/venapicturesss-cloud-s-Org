@@ -364,6 +364,8 @@ const MainApp: React.FC<MainAppProps> = ({
             cards={cards} setCards={setCards}
             pockets={pockets} setPockets={setPockets}
             promoCodes={promoCodes} setPromoCodes={setPromoCodes}
+            vendorId={vendorId}
+            reloadData={reloadData}
         />;
       case ViewType.BOOKING:
         return <Booking
