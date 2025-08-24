@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { SupabaseProvider } from './context/SupabaseContext';
+import { useSupabaseAuth } from './context/SupabaseContext';
+import SupabaseLogin from './components/SupabaseLogin';
+import SupabaseDataManager from './components/SupabaseDataManager';
 import { ViewType, Client, Project, TeamMember, Transaction, Package, AddOn, TeamProjectPayment, Profile, FinancialPocket, TeamPaymentRecord, Lead, RewardLedgerEntry, User, Card, Asset, ClientFeedback, Contract, RevisionStatus, NavigationAction, Notification, SocialMediaPost, PromoCode, SOP, CardType, PocketType, VendorData } from './types';
 import { MOCK_USERS, DEFAULT_USER_PROFILE, MOCK_DATA, HomeIcon, FolderKanbanIcon, UsersIcon, DollarSignIcon, PlusIcon, lightenColor, darkenColor, hexToHsl } from './constants';
 import Sidebar from './components/Sidebar';
@@ -75,6 +78,7 @@ const App: React.FC = () => {
 };
 
 const AppContent: React.FC = () => {
+  const { user, loading: authLoading, signOut } = useSupabaseAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeView, setActiveView] = useState<ViewType>(ViewType.HOMEPAGE);
@@ -84,30 +88,110 @@ const AppContent: React.FC = () => {
   const [route, setRoute] = useState(window.location.hash || '#/home');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  // --- State Initialization ---
-  const [users, setUsers] = useState<User[]>(() => JSON.parse(JSON.stringify(MOCK_USERS)));
-  
-  // --- All data is now initialized from a single mock data source ---
-  const [clients, setClients] = useState<Client[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.clients)));
-  const [projects, setProjects] = useState<Project[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.projects)));
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.teamMembers)));
-  const [transactions, setTransactions] = useState<Transaction[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.transactions)));
-  const [teamProjectPayments, setTeamProjectPayments] = useState<TeamProjectPayment[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.teamProjectPayments)));
-  const [teamPaymentRecords, setTeamPaymentRecords] = useState<TeamPaymentRecord[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.teamPaymentRecords)));
-  const [pockets, setPockets] = useState<FinancialPocket[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.pockets)));
-  const [profile, setProfile] = useState<Profile>(() => JSON.parse(JSON.stringify(MOCK_DATA.profile)));
-  const [leads, setLeads] = useState<Lead[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.leads)));
-  const [rewardLedgerEntries, setRewardLedgerEntries] = useState<RewardLedgerEntry[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.rewardLedgerEntries)));
-  const [cards, setCards] = useState<Card[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.cards)));
-  const [assets, setAssets] = useState<Asset[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.assets)));
-  const [contracts, setContracts] = useState<Contract[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.contracts)));
-  const [clientFeedback, setClientFeedback] = useState<ClientFeedback[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.clientFeedback)));
-  const [notifications, setNotifications] = useState<Notification[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.notifications)));
-  const [socialMediaPosts, setSocialMediaPosts] = useState<SocialMediaPost[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.socialMediaPosts)));
-  const [promoCodes, setPromoCodes] = useState<PromoCode[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.promoCodes)));
-  const [sops, setSops] = useState<SOP[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.sops)));
-  const [packages, setPackages] = useState<Package[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.packages)));
-  const [addOns, setAddOns] = useState<AddOn[]>(() => JSON.parse(JSON.stringify(MOCK_DATA.addOns)));
+  // Check authentication status based on Supabase user
+  useEffect(() => {
+    setIsAuthenticated(!!user);
+    if (user) {
+      setCurrentUser(user);
+    }
+  }, [user]);
+
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-brand-bg">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-accent mx-auto"></div>
+          <p className="mt-4 text-brand-text-secondary">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <SupabaseLogin onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
+
+  return (
+    <SupabaseDataManager>
+      {(data) => <MainApp {...data} currentUser={user} handleLogout={signOut} />}
+    </SupabaseDataManager>
+  );
+};
+
+interface MainAppProps {
+  clients: Client[];
+  setClients: React.Dispatch<React.SetStateAction<Client[]>>;
+  projects: Project[];
+  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
+  packages: Package[];
+  setPackages: React.Dispatch<React.SetStateAction<Package[]>>;
+  transactions: Transaction[];
+  setTransactions: React.Dispatch<React.SetStateAction<Transaction[]>>;
+  leads: Lead[];
+  setLeads: React.Dispatch<React.SetStateAction<Lead[]>>;
+  profile: Profile;
+  setProfile: React.Dispatch<React.SetStateAction<Profile>>;
+  loading: boolean;
+  addOns: AddOn[];
+  setAddOns: React.Dispatch<React.SetStateAction<AddOn[]>>;
+  teamMembers: TeamMember[];
+  setTeamMembers: React.Dispatch<React.SetStateAction<TeamMember[]>>;
+  cards: Card[];
+  setCards: React.Dispatch<React.SetStateAction<Card[]>>;
+  pockets: FinancialPocket[];
+  setPockets: React.Dispatch<React.SetStateAction<FinancialPocket[]>>;
+  assets: Asset[];
+  setAssets: React.Dispatch<React.SetStateAction<Asset[]>>;
+  contracts: Contract[];
+  setContracts: React.Dispatch<React.SetStateAction<Contract[]>>;
+  clientFeedback: ClientFeedback[];
+  setClientFeedback: React.Dispatch<React.SetStateAction<ClientFeedback[]>>;
+  notifications: Notification[];
+  setNotifications: React.Dispatch<React.SetStateAction<Notification[]>>;
+  socialMediaPosts: SocialMediaPost[];
+  setSocialMediaPosts: React.Dispatch<React.SetStateAction<SocialMediaPost[]>>;
+  promoCodes: PromoCode[];
+  setPromoCodes: React.Dispatch<React.SetStateAction<PromoCode[]>>;
+  sops: SOP[];
+  setSops: React.Dispatch<React.SetStateAction<SOP[]>>;
+  teamProjectPayments: TeamProjectPayment[];
+  setTeamProjectPayments: React.Dispatch<React.SetStateAction<TeamProjectPayment[]>>;
+  teamPaymentRecords: TeamPaymentRecord[];
+  setTeamPaymentRecords: React.Dispatch<React.SetStateAction<TeamPaymentRecord[]>>;
+  rewardLedgerEntries: RewardLedgerEntry[];
+  setRewardLedgerEntries: React.Dispatch<React.SetStateAction<RewardLedgerEntry[]>>;
+  currentUser: User | null;
+  handleLogout: () => void;
+}
+
+const MainApp: React.FC<MainAppProps> = ({
+  clients, setClients, projects, setProjects, packages, setPackages,
+  transactions, setTransactions, leads, setLeads, profile, setProfile,
+  loading, addOns, setAddOns, teamMembers, setTeamMembers, cards, setCards,
+  pockets, setPockets, assets, setAssets, contracts, setContracts,
+  clientFeedback, setClientFeedback, notifications, setNotifications,
+  socialMediaPosts, setSocialMediaPosts, promoCodes, setPromoCodes,
+  sops, setSops, teamProjectPayments, setTeamProjectPayments,
+  teamPaymentRecords, setTeamPaymentRecords, rewardLedgerEntries, setRewardLedgerEntries,
+  currentUser, handleLogout
+}) => {
+  const [activeView, setActiveView] = useState<ViewType>(ViewType.DASHBOARD);
+  const [notification, setNotification] = useState<string>('');
+  const [initialAction, setInitialAction] = useState<NavigationAction | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [route, setRoute] = useState(window.location.hash || '#/dashboard');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-brand-bg">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-accent mx-auto"></div>
+          <p className="mt-4 text-brand-text-secondary">Loading data...</p>
+        </div>
+      </div>
+    );
+  }
 
 
     // --- [NEW] MOCK EMAIL SERVICE ---
@@ -145,7 +229,7 @@ const AppContent: React.FC = () => {
     const handleHashChange = () => {
         const newRoute = window.location.hash || '#/home';
         setRoute(newRoute);
-        if (!isAuthenticated) {
+        if (!currentUser) {
             const isPublicRoute = newRoute.startsWith('#/public') || newRoute.startsWith('#/feedback') || newRoute.startsWith('#/suggestion-form') || newRoute.startsWith('#/revision-form') || newRoute.startsWith('#/portal') || newRoute.startsWith('#/freelancer-portal') || newRoute.startsWith('#/login') || newRoute === '#/home' || newRoute === '#';
             if (!isPublicRoute) {
                 window.location.hash = '#/home';
@@ -155,7 +239,7 @@ const AppContent: React.FC = () => {
     window.addEventListener('hashchange', handleHashChange);
     handleHashChange(); // Initial check
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [isAuthenticated]);
+  }, [currentUser]);
   
   useEffect(() => {
         const styleElement = document.getElementById('public-theme-style');
@@ -196,18 +280,10 @@ const AppContent: React.FC = () => {
   };
 
   const handleLoginSuccess = (user: User) => {
-    setIsAuthenticated(true);
-    setCurrentUser(user);
-    window.location.hash = '#/dashboard';
-    setActiveView(ViewType.DASHBOARD);
+    // This is now handled by Supabase auth
   };
   
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setCurrentUser(null);
-    window.location.hash = '#/home';
-    setActiveView(ViewType.HOMEPAGE);
-  };
+  // handleLogout is now passed from parent (Supabase signOut)
 
   const handleMarkAsRead = (notificationId: string) => {
     setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, isRead: true } : n));
@@ -387,8 +463,8 @@ const AppContent: React.FC = () => {
         return <Settings 
           profile={profile} setProfile={handleSetProfile} 
           transactions={transactions} projects={projects}
-          users={users.filter(u => u.vendorId === currentUser?.vendorId)} // Only pass users for the current vendor
-          setUsers={setUsers}
+          users={[]} // Will be implemented later
+          setUsers={() => {}} // Will be implemented later
           currentUser={currentUser}
         />;
       case ViewType.CALENDAR:
@@ -413,7 +489,6 @@ const AppContent: React.FC = () => {
   
   // --- ROUTING LOGIC ---
   if (route.startsWith('#/home') || route === '#/') return <Homepage />;
-  if (route.startsWith('#/login')) return <Login onLoginSuccess={handleLoginSuccess} users={users} />;
   
   if (route.startsWith('#/public-packages')) {
     return <PublicPackages
@@ -451,8 +526,6 @@ const AppContent: React.FC = () => {
      const accessId = route.split('/freelancer-portal/')[1];
      return <FreelancerPortal accessId={accessId} teamMembers={teamMembers} projects={projects} teamProjectPayments={teamProjectPayments} teamPaymentRecords={teamPaymentRecords} rewardLedgerEntries={rewardLedgerEntries} showNotification={showNotification} onUpdateRevision={(pId, rId, data) => setProjects(prev => prev.map(p => p.id === pId ? {...p, revisions: p.revisions?.map(r => r.id === rId ? {...r, ...data, completedDate: new Date().toISOString()} : r)} : p))} sops={sops} userProfile={profile} />;
   }
-
-  if (!isAuthenticated) return <Login onLoginSuccess={handleLoginSuccess} users={users} />;
 
   return (
     <div className="flex h-screen bg-brand-bg text-brand-text-primary">
