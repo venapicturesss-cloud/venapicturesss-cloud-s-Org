@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Project, PaymentStatus, TeamMember, Client, Package, TeamProjectPayment, Transaction, TransactionType, AssignedTeamMember, Profile, Revision, RevisionStatus, NavigationAction, AddOn, PrintingItem, Card, ProjectStatusConfig, SubStatusConfig } from '../types';
+import { ProjectService } from '../services/projectService';
 import PageHeader from './PageHeader';
 import Modal from './Modal';
 import StatCard from './StatCard';
@@ -77,7 +78,7 @@ interface ProjectFormProps {
     onFormChange: (e: React.ChangeEvent<any>) => void;
     onSubStatusChange: (option: string, isChecked: boolean) => void;
     onClientChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-    onTeamChange: (member: TeamMember) => void;
+    onTeamChange: (member: TeamMember>) => void;
     onTeamFeeChange: (memberId: string, fee: number) => void;
     onTeamRewardChange: (memberId: string, reward: number) => void;
     onTeamSubJobChange: (memberId: string, subJob: string) => void;
@@ -89,6 +90,7 @@ interface ProjectFormProps {
     teamMembers: TeamMember[];
     profile: Profile;
     teamByRole: Record<string, TeamMember[]>;
+    isSubmitting: boolean;
 }
 
 const ProjectForm: React.FC<ProjectFormProps> = ({
@@ -96,7 +98,7 @@ const ProjectForm: React.FC<ProjectFormProps> = ({
     onTeamChange, onTeamFeeChange, onTeamRewardChange, onTeamSubJobChange,
     onCustomSubStatusChange, onAddCustomSubStatus, onRemoveCustomSubStatus,
     onSubmit, clients, teamMembers,
-    profile, teamByRole
+    profile, teamByRole, isSubmitting
 }) => {
     return (
         <Modal
@@ -258,8 +260,10 @@ const ProjectForm: React.FC<ProjectFormProps> = ({
                 </div>
 
                 <div className="flex justify-end items-center gap-3 pt-6 border-t border-brand-border">
-                    <button type="button" onClick={onClose} className="button-secondary">Batal</button>
-                    <button type="submit" className="button-primary">{mode === 'add' ? 'Simpan Proyek' : 'Update Proyek'}</button>
+                    <button type="button" onClick={onClose} className="button-secondary" disabled={isSubmitting}>Batal</button>
+                    <button type="submit" className="button-primary" disabled={isSubmitting}>
+                        {isSubmitting ? 'Menyimpan...' : (mode === 'add' ? 'Simpan Proyek' : 'Update Proyek')}
+                    </button>
                 </div>
             </form>
         </Modal>
@@ -951,6 +955,8 @@ interface ProjectsProps {
     showNotification: (message: string) => void;
     cards: Card[];
     setCards: React.Dispatch<React.SetStateAction<Card[]>>;
+    vendorId: string | null;
+    reloadData: () => void;
 }
 
 const ConfirmationModal: React.FC<{
@@ -1096,7 +1102,7 @@ Salam hangat,
     );
 };
 
-export const Projects: React.FC<ProjectsProps> = ({ projects, setProjects, clients, packages, teamMembers, teamProjectPayments, setTeamProjectPayments, transactions, setTransactions, initialAction, setInitialAction, profile, showNotification, cards, setCards }) => {
+export const Projects: React.FC<ProjectsProps> = ({ projects, setProjects, clients, packages, teamMembers, teamProjectPayments, setTeamProjectPayments, transactions, setTransactions, initialAction, setInitialAction, profile, showNotification, cards, setCards, vendorId, reloadData }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState<string | 'all'>('all');
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -1141,6 +1147,7 @@ export const Projects: React.FC<ProjectsProps> = ({ projects, setProjects, clien
     const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
     
     const [isBriefingModalOpen, setIsBriefingModalOpen] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [briefingText, setBriefingText] = useState('');
     const [whatsappLink, setWhatsappLink] = useState('');
     const [googleCalendarLink, setGoogleCalendarLink] = useState('');
@@ -1382,100 +1389,138 @@ export const Projects: React.FC<ProjectsProps> = ({ projects, setProjects, clien
         }));
     };
 
-    const handleFormSubmit = (e: React.FormEvent) => {
+    const handleFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        
-        let projectData: Project;
+        if (isSubmitting) return;
 
-        if (formMode === 'add') {
-             projectData = {
-                ...initialFormState,
-                ...formData,
-                id: `PRJ${Date.now()}`,
-                progress: 0,
-                totalCost: 0, // Will be set on client page
-                amountPaid: 0,
-                paymentStatus: PaymentStatus.BELUM_BAYAR,
-                packageId: '',
-                addOns: [],
-            };
-        } else { // edit mode
-            const originalProject = projects.find(p => p.id === formData.id);
-            if (!originalProject) return; 
-            projectData = { ...originalProject, ...formData };
-            
-            const paymentCardId = cards.find(c => c.id !== 'CARD_CASH')?.id;
-            if (!paymentCardId) {
-                showNotification("Tidak ada kartu pembayaran untuk mencatat pengeluaran.");
-            } else {
-                let tempTransactions = [...transactions];
-                let tempCards = [...cards];
-                const fieldsToProcess: ('printingCost' | 'transportCost')[] = [];
+        if (!vendorId) {
+            showNotification('Error: Pengguna tidak terautentikasi.');
+            return;
+        }
 
-                if (originalProject.printingCost !== projectData.printingCost) fieldsToProcess.push('printingCost');
-                if (originalProject.transportCost !== projectData.transportCost) fieldsToProcess.push('transportCost');
+        setIsSubmitting(true);
+        try {
+            if (formMode === 'add') {
+                const newProjectData: Omit<Project, 'id'> = {
+                    ...initialFormState,
+                    ...formData,
+                    progress: 0,
+                    totalCost: 0, // Financials are handled from Client page
+                    amountPaid: 0,
+                    paymentStatus: PaymentStatus.BELUM_BAYAR,
+                    packageId: '',
+                    packageName: 'N/A', // Or some default
+                    addOns: [],
+                    clientName: clients.find(c => c.id === formData.clientId)?.name || 'N/A'
+                };
+                await ProjectService.create(newProjectData, vendorId);
+                showNotification('Proyek baru berhasil ditambahkan.');
+            } else { // edit mode
+                const originalProject = projects.find(p => p.id === formData.id);
+                if (!originalProject) {
+                    throw new Error("Proyek asli tidak ditemukan untuk diperbarui.");
+                }
 
-                fieldsToProcess.forEach(field => {
-                    const cost = projectData[field] || 0;
-                    const category = field === 'printingCost' ? 'Biaya Cetak' : 'Transportasi';
-                    const description = field === 'printingCost' ? `Biaya Cetak - ${projectData.projectName}` : `Biaya Transportasi - ${projectData.projectName}`;
-                    const txId = `TRN-COST-${field.replace('Cost','')}-${projectData.id}`;
-                    
-                    const existingTxIndex = tempTransactions.findIndex(t => t.id === txId);
+                const projectUpdateData: Partial<Project> = {
+                    projectName: formData.projectName,
+                    projectType: formData.projectType,
+                    status: formData.status,
+                    location: formData.location,
+                    date: formData.date,
+                    deadlineDate: formData.deadlineDate,
+                    startTime: formData.startTime,
+                    endTime: formData.endTime,
+                    team: formData.team,
+                    notes: formData.notes,
+                    driveLink: formData.driveLink,
+                    clientDriveLink: formData.clientDriveLink,
+                    finalDriveLink: formData.finalDriveLink,
+                    shippingDetails: formData.shippingDetails,
+                    printingCost: formData.printingCost,
+                    transportCost: formData.transportCost,
+                    isEditingConfirmedByClient: formData.isEditingConfirmedByClient,
+                    isPrintingConfirmedByClient: formData.isPrintingConfirmedByClient,
+                    isDeliveryConfirmedByClient: formData.isDeliveryConfirmedByClient,
+                    activeSubStatuses: formData.activeSubStatuses,
+                    customSubStatuses: formData.customSubStatuses,
+                };
+                await ProjectService.update(originalProject.id, projectUpdateData);
 
-                    if (existingTxIndex > -1) {
-                        const oldAmount = tempTransactions[existingTxIndex].amount;
-                        if (cost > 0) {
-                            tempTransactions[existingTxIndex].amount = cost;
-                            const diff = cost - oldAmount;
-                            tempCards = tempCards.map(c => c.id === paymentCardId ? { ...c, balance: c.balance - diff } : c);
-                        } else {
-                            tempTransactions.splice(existingTxIndex, 1);
-                            tempCards = tempCards.map(c => c.id === paymentCardId ? { ...c, balance: c.balance + oldAmount } : c);
+                // This local state update should be removed when transactions/cards services are used.
+                // For now, it remains to keep related UI functional.
+                const projectData = { ...originalProject, ...formData };
+                const paymentCardId = cards.find(c => c.id !== 'CARD_CASH')?.id;
+                 if (paymentCardId) {
+                    let tempTransactions = [...transactions];
+                    let tempCards = [...cards];
+                    const fieldsToProcess: ('printingCost' | 'transportCost')[] = [];
+                    if (originalProject.printingCost !== projectData.printingCost) fieldsToProcess.push('printingCost');
+                    if (originalProject.transportCost !== projectData.transportCost) fieldsToProcess.push('transportCost');
+                    fieldsToProcess.forEach(field => {
+                        const cost = projectData[field] || 0;
+                        const category = field === 'printingCost' ? 'Biaya Cetak' : 'Transportasi';
+                        const description = field === 'printingCost' ? `Biaya Cetak - ${projectData.projectName}` : `Biaya Transportasi - ${projectData.projectName}`;
+                        const txId = `TRN-COST-${field.replace('Cost','')}-${projectData.id}`;
+                        const existingTxIndex = tempTransactions.findIndex(t => t.id === txId);
+                        if (existingTxIndex > -1) {
+                            const oldAmount = tempTransactions[existingTxIndex].amount;
+                            if (cost > 0) {
+                                tempTransactions[existingTxIndex].amount = cost;
+                                const diff = cost - oldAmount;
+                                tempCards = tempCards.map(c => c.id === paymentCardId ? { ...c, balance: c.balance - diff } : c);
+                            } else {
+                                tempTransactions.splice(existingTxIndex, 1);
+                                tempCards = tempCards.map(c => c.id === paymentCardId ? { ...c, balance: c.balance + oldAmount } : c);
+                            }
+                        } else if (cost > 0) {
+                            const newTx: Transaction = { id: txId, date: new Date().toISOString().split('T')[0], description, amount: cost, type: TransactionType.EXPENSE, projectId: projectData.id, category, method: 'Sistem', cardId: paymentCardId };
+                            tempTransactions.push(newTx);
+                            tempCards = tempCards.map(c => c.id === paymentCardId ? { ...c, balance: c.balance - cost } : c);
                         }
-                    } else if (cost > 0) {
-                        const newTx: Transaction = {
-                            id: txId, date: new Date().toISOString().split('T')[0], description, amount: cost,
-                            type: TransactionType.EXPENSE, projectId: projectData.id, category,
-                            method: 'Sistem', cardId: paymentCardId,
-                        };
-                        tempTransactions.push(newTx);
-                        tempCards = tempCards.map(c => c.id === paymentCardId ? { ...c, balance: c.balance - cost } : c);
-                    }
-                });
-
-                setTransactions(tempTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-                setCards(tempCards);
+                    });
+                    setTransactions(tempTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+                    setCards(tempCards);
+                }
+                showNotification('Proyek berhasil diperbarui.');
             }
-        }
-        
-        const allTeamMembersOnProject = projectData.team;
-        const otherProjectPayments = teamProjectPayments.filter(p => p.projectId !== projectData.id);
-        const newProjectPaymentEntries: TeamProjectPayment[] = allTeamMembersOnProject.map(teamMember => ({
-            id: `TPP-${projectData.id}-${teamMember.memberId}`,
-            projectId: projectData.id,
-            teamMemberName: teamMember.name,
-            teamMemberId: teamMember.memberId,
-            date: projectData.date,
-            status: 'Unpaid',
-            fee: teamMember.fee,
-            reward: teamMember.reward || 0,
-        }));
-        setTeamProjectPayments([...otherProjectPayments, ...newProjectPaymentEntries]);
 
-        if (formMode === 'add') {
-            setProjects(prev => [projectData, ...prev].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-        } else {
-            setProjects(prev => prev.map(p => p.id === projectData.id ? projectData : p).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+            // This should also be migrated to a service.
+            const projectDataForTeam = formMode === 'add' ? formData : { ...projects.find(p => p.id === formData.id), ...formData };
+            const allTeamMembersOnProject = projectDataForTeam.team;
+            const otherProjectPayments = teamProjectPayments.filter(p => p.projectId !== projectDataForTeam.id);
+            const newProjectPaymentEntries: TeamProjectPayment[] = allTeamMembersOnProject.map(teamMember => ({
+                id: `TPP-${projectDataForTeam.id}-${teamMember.memberId}`,
+                projectId: projectDataForTeam.id,
+                teamMemberName: teamMember.name,
+                teamMemberId: teamMember.memberId,
+                date: projectDataForTeam.date,
+                status: 'Unpaid',
+                fee: teamMember.fee,
+                reward: teamMember.reward || 0,
+            }));
+            setTeamProjectPayments([...otherProjectPayments, ...newProjectPaymentEntries]);
+
+            await reloadData();
+            handleCloseForm();
+
+        } catch (error) {
+            console.error("Failed to save project:", error);
+            showNotification(`Error: Gagal menyimpan proyek. ${(error as Error).message}`);
+        } finally {
+            setIsSubmitting(false);
         }
-        handleCloseForm();
     };
 
-    const handleProjectDelete = (projectId: string) => {
-        if (window.confirm("Apakah Anda yakin ingin menghapus proyek ini? Semua data terkait (termasuk tugas tim dan transaksi) akan dihapus.")) {
-            setProjects(prev => prev.filter(p => p.id !== projectId));
-            setTeamProjectPayments(prev => prev.filter(fp => fp.projectId !== projectId));
-            setTransactions(prev => prev.filter(t => t.projectId !== projectId));
+    const handleProjectDelete = async (projectId: string) => {
+        if (window.confirm("Apakah Anda yakin ingin menghapus proyek ini? Ini tidak dapat diurungkan.")) {
+            try {
+                await ProjectService.delete(projectId);
+                showNotification("Proyek berhasil dihapus.");
+                await reloadData();
+            } catch (error) {
+                console.error("Failed to delete project:", error);
+                showNotification(`Error: Gagal menghapus proyek. ${(error as Error).message}`);
+            }
         }
     };
     
@@ -1746,6 +1791,7 @@ export const Projects: React.FC<ProjectsProps> = ({ projects, setProjects, clien
                 teamMembers={teamMembers}
                 profile={profile}
                 teamByRole={teamByRole}
+                isSubmitting={isSubmitting}
             />
 
             <Modal isOpen={isDetailModalOpen} onClose={() => setIsDetailModalOpen(false)} title={`Detail Proyek: ${selectedProject?.projectName}`} size="3xl">

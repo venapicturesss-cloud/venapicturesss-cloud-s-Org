@@ -411,6 +411,8 @@ const MainApp: React.FC<MainAppProps> = ({
           showNotification={showNotification}
           cards={cards}
           setCards={setCards}
+          vendorId={vendorId}
+          reloadData={reloadData}
         />;
       case ViewType.TEAM:
         return (
