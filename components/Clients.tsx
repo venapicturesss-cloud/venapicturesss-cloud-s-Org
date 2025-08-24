@@ -1,6 +1,9 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Project, PaymentStatus, Package, AddOn, TransactionType, Profile, Transaction, ClientStatus, Card, FinancialPocket, Contract, ViewType, NavigationAction, ClientFeedback, SatisfactionLevel, PromoCode, ClientType, Notification } from '../types';
+import { ClientService } from '../services/clientService';
+import { ProjectService } from '../services/projectService';
+import { TransactionService } from '../services/transactionService';
 import PageHeader from './PageHeader';
 import Modal from './Modal';
 import StatCard from './StatCard';
@@ -192,9 +195,10 @@ interface ClientFormProps {
     modalMode: 'add' | 'edit';
     cards: Card[];
     promoCodes: PromoCode[];
+    isSubmitting: boolean;
 }
 
-const ClientForm: React.FC<ClientFormProps> = ({ formData, handleFormChange, handleFormSubmit, handleCloseModal, packages, addOns, userProfile, modalMode, cards, promoCodes }) => {
+const ClientForm: React.FC<ClientFormProps> = ({ formData, handleFormChange, handleFormSubmit, handleCloseModal, packages, addOns, userProfile, modalMode, cards, promoCodes, isSubmitting }) => {
     
     const priceCalculations = useMemo(() => {
         const selectedPackage = packages.find(p => p.id === formData.packageId);
@@ -316,8 +320,10 @@ const ClientForm: React.FC<ClientFormProps> = ({ formData, handleFormChange, han
             </div>
 
             <div className="flex justify-end items-center gap-3 pt-8 mt-8 border-t border-brand-border">
-                <button type="button" onClick={handleCloseModal} className="button-secondary">Batal</button>
-                <button type="submit" className="button-primary">{modalMode === 'add' ? 'Simpan Klien & Proyek' : 'Update Klien & Proyek'}</button>
+                <button type="button" onClick={handleCloseModal} className="button-secondary" disabled={isSubmitting}>Batal</button>
+                <button type="submit" className="button-primary" disabled={isSubmitting}>
+                    {isSubmitting ? 'Menyimpan...' : (modalMode === 'add' ? 'Simpan Klien & Proyek' : 'Update Klien & Proyek')}
+                </button>
             </div>
         </form>
     );
@@ -540,6 +546,11 @@ const ClientDetailModal: React.FC<ClientDetailModalProps> = ({ client, projects,
                     </div>
                 )}
             </div>
+            <div className="flex justify-end items-center gap-3 pt-4 mt-4 border-t border-brand-border">
+                <button type="button" onClick={() => onDeleteClient(client.id)} className="button-danger-outline mr-auto">Hapus Klien</button>
+                <button type="button" onClick={onClose} className="button-secondary">Tutup</button>
+                <button type="button" onClick={() => onEditClient(client)} className="button-primary">Edit Detail</button>
+            </div>
         </div>
     );
 };
@@ -570,6 +581,8 @@ interface ClientsProps {
     onSignInvoice: (projectId: string, signatureDataUrl: string) => void;
     onSignTransaction: (transactionId: string, signatureDataUrl: string) => void;
     addNotification: (notification: Omit<Notification, 'id' | 'timestamp' | 'isRead'>) => void;
+    vendorId: string | null;
+    reloadData: () => void;
 }
 
 const NewClientsChart: React.FC<{ data: { name: string; count: number }[] }> = ({ data }) => {
@@ -597,7 +610,7 @@ const NewClientsChart: React.FC<{ data: { name: string; count: number }[] }> = (
     );
 };
 
-const Clients: React.FC<ClientsProps> = ({ clients, setClients, projects, setProjects, packages, addOns, transactions, setTransactions, userProfile, showNotification, initialAction, setInitialAction, cards, setCards, pockets, setPockets, contracts, handleNavigation, clientFeedback, promoCodes, setPromoCodes, onSignInvoice, onSignTransaction, addNotification }) => {
+const Clients: React.FC<ClientsProps> = ({ clients, setClients, projects, setProjects, packages, addOns, transactions, setTransactions, userProfile, showNotification, initialAction, setInitialAction, cards, setCards, pockets, setPockets, contracts, handleNavigation, clientFeedback, promoCodes, setPromoCodes, onSignInvoice, onSignTransaction, addNotification, vendorId, reloadData }) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -607,6 +620,7 @@ const Clients: React.FC<ClientsProps> = ({ clients, setClients, projects, setPro
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [clientForDetail, setClientForDetail] = useState<Client | null>(null);
     const [billingChatModal, setBillingChatModal] = useState<Client | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const [documentToView, setDocumentToView] = useState<{ type: 'invoice', project: Project } | { type: 'receipt', transaction: Transaction } | null>(null);
     const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
@@ -856,12 +870,18 @@ const Clients: React.FC<ClientsProps> = ({ clients, setClients, projects, setPro
         return data;
     }, [clients]);
     
-    const handleFormSubmit = (e: React.FormEvent) => {
+    const handleFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        
+        if (isSubmitting) return;
+
+        if (!vendorId) {
+            showNotification('Error: Pengguna tidak terautentikasi dengan benar.');
+            return;
+        }
+
         const selectedPackage = packages.find(p => p.id === formData.packageId);
         if (!selectedPackage) {
-            alert('Harap pilih paket layanan.');
+            showNotification('Harap pilih paket layanan.');
             return;
         }
 
@@ -877,172 +897,215 @@ const Clients: React.FC<ClientsProps> = ({ clients, setClients, projects, setPro
             }
         }
         const totalProject = totalBeforeDiscount - finalDiscountAmount;
+        const dpAmount = Number(formData.dp) || 0;
 
-        if (modalMode === 'add') {
-             let clientId = selectedClient?.id;
-             if (!selectedClient) { // New client
-                clientId = `CLI${Date.now()}`;
-                const newClient: Client = {
-                    id: clientId,
+        setIsSubmitting(true);
+
+        try {
+            if (modalMode === 'add') {
+                let clientToUse: Client;
+
+                if (selectedClient) {
+                    clientToUse = selectedClient;
+                } else {
+                    const newClientData: Omit<Client, 'id'> = {
+                        name: formData.clientName,
+                        email: formData.email,
+                        phone: formData.phone,
+                        whatsapp: formData.whatsapp || '',
+                        instagram: formData.instagram || '',
+                        clientType: formData.clientType,
+                        since: new Date().toISOString().split('T')[0],
+                        status: ClientStatus.ACTIVE,
+                        lastContact: new Date().toISOString(),
+                        portalAccessId: crypto.randomUUID(),
+                    };
+                    clientToUse = await ClientService.create(newClientData, vendorId);
+                }
+
+                const remainingPayment = totalProject - dpAmount;
+                const physicalItemsFromPackage = selectedPackage.physicalItems.map((item, index) => ({
+                    id: `pi-${Date.now()}-${index}`,
+                    type: 'Custom' as 'Custom',
+                    customName: item.name,
+                    details: item.name,
+                    cost: item.price,
+                }));
+                const printingCostFromPackage = physicalItemsFromPackage.reduce((sum, item) => sum + item.cost, 0);
+
+                const newProjectData: Omit<Project, 'id'> = {
+                    projectName: formData.projectName,
+                    clientName: clientToUse.name,
+                    clientId: clientToUse.id,
+                    projectType: formData.projectType,
+                    packageName: selectedPackage.name,
+                    packageId: selectedPackage.id,
+                    addOns: selectedAddOns,
+                    date: formData.date,
+                    location: formData.location,
+                    progress: 0,
+                    status: 'Dikonfirmasi',
+                    totalCost: totalProject,
+                    amountPaid: dpAmount,
+                    paymentStatus: dpAmount > 0 ? (remainingPayment <= 0 ? PaymentStatus.LUNAS : PaymentStatus.DP_TERBAYAR) : PaymentStatus.BELUM_BAYAR,
+                    team: [],
+                    notes: formData.notes,
+                    accommodation: formData.accommodation,
+                    driveLink: formData.driveLink,
+                    promoCodeId: formData.promoCodeId || undefined,
+                    discountAmount: finalDiscountAmount > 0 ? finalDiscountAmount : undefined,
+                    printingDetails: physicalItemsFromPackage,
+                    printingCost: printingCostFromPackage,
+                    completedDigitalItems: [],
+                };
+                const newProject = await ProjectService.create(newProjectData, vendorId);
+
+                if (newProject.amountPaid > 0 && formData.dpDestinationCardId) {
+                     const newTransactionData: Omit<Transaction, 'id'> = {
+                        date: new Date().toISOString().split('T')[0],
+                        description: `DP Proyek ${newProject.projectName}`,
+                        amount: newProject.amountPaid,
+                        type: TransactionType.INCOME,
+                        projectId: newProject.id,
+                        category: 'DP Proyek',
+                        method: 'Transfer Bank',
+                        cardId: formData.dpDestinationCardId,
+                    };
+                    await TransactionService.create(newTransactionData, vendorId);
+                }
+
+                showNotification(`Klien ${formData.clientName} dan proyek baru berhasil ditambahkan.`);
+
+            } else if (modalMode === 'edit' && selectedClient && selectedProject) {
+                const clientUpdateData: Partial<Client> = {
                     name: formData.clientName,
                     email: formData.email,
                     phone: formData.phone,
-                    whatsapp: formData.whatsapp,
-                    instagram: formData.instagram,
+                    whatsapp: formData.whatsapp || '',
+                    instagram: formData.instagram || '',
                     clientType: formData.clientType,
-                    since: new Date().toISOString().split('T')[0],
-                    status: ClientStatus.ACTIVE,
-                    lastContact: new Date().toISOString(),
-                    portalAccessId: crypto.randomUUID(),
                 };
-                setClients(prev => [newClient, ...prev]);
-             }
-             
-            const dpAmount = Number(formData.dp) || 0;
-            const remainingPayment = totalProject - dpAmount;
 
-            const physicalItemsFromPackage = selectedPackage.physicalItems.map((item, index) => ({
-                id: `pi-${Date.now()}-${index}`,
-                type: 'Custom' as 'Custom',
-                customName: item.name,
-                details: item.name,
-                cost: item.price,
-            }));
+                const amountPaid = selectedProject.amountPaid;
+                const remainingPayment = totalProject - amountPaid;
 
-            const printingCostFromPackage = physicalItemsFromPackage.reduce((sum, item) => sum + item.cost, 0);
-
-            const newProject: Project = {
-                id: `PRJ${Date.now()}`,
-                projectName: formData.projectName,
-                clientName: formData.clientName,
-                clientId: clientId!,
-                projectType: formData.projectType,
-                packageName: selectedPackage.name,
-                packageId: selectedPackage.id,
-                addOns: selectedAddOns,
-                date: formData.date,
-                location: formData.location,
-                progress: 0,
-                status: 'Dikonfirmasi',
-                totalCost: totalProject,
-                amountPaid: dpAmount,
-                paymentStatus: dpAmount > 0 ? (remainingPayment <= 0 ? PaymentStatus.LUNAS : PaymentStatus.DP_TERBAYAR) : PaymentStatus.BELUM_BAYAR,
-                team: [],
-                notes: formData.notes,
-                accommodation: formData.accommodation,
-                driveLink: formData.driveLink,
-                promoCodeId: formData.promoCodeId || undefined,
-                discountAmount: finalDiscountAmount > 0 ? finalDiscountAmount : undefined,
-                printingDetails: physicalItemsFromPackage,
-                printingCost: printingCostFromPackage,
-                completedDigitalItems: [],
-            };
-            setProjects(prev => [newProject, ...prev]);
-
-            if (newProject.amountPaid > 0) {
-                 const newTransaction: Transaction = {
-                    id: `TRN-DP-${newProject.id}`,
-                    date: new Date().toISOString().split('T')[0],
-                    description: `DP Proyek ${newProject.projectName}`,
-                    amount: newProject.amountPaid,
-                    type: TransactionType.INCOME,
-                    projectId: newProject.id,
-                    category: 'DP Proyek',
-                    method: 'Transfer Bank',
-                    cardId: formData.dpDestinationCardId,
+                const projectUpdateData: Partial<Project> = {
+                    projectName: formData.projectName,
+                    projectType: formData.projectType,
+                    location: formData.location,
+                    date: formData.date,
+                    packageName: selectedPackage.name,
+                    packageId: selectedPackage.id,
+                    addOns: selectedAddOns,
+                    totalCost: totalProject,
+                    paymentStatus: amountPaid > 0 ? (remainingPayment <= 0 ? PaymentStatus.LUNAS : PaymentStatus.DP_TERBAYAR) : PaymentStatus.BELUM_BAYAR,
+                    notes: formData.notes,
+                    promoCodeId: formData.promoCodeId || undefined,
+                    discountAmount: finalDiscountAmount > 0 ? finalDiscountAmount : undefined,
                 };
-                setTransactions(prev => [...prev, newTransaction].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-                setCards(prev => prev.map(c => c.id === formData.dpDestinationCardId ? {...c, balance: c.balance + newProject.amountPaid} : c));
-            }
-             if (promoCode) {
-                setPromoCodes(prev => prev.map(p => p.id === promoCode.id ? { ...p, usageCount: p.usageCount + 1 } : p));
-            }
-            showNotification(`Klien ${formData.clientName} dan proyek baru berhasil ditambahkan.`);
 
-        } else if (modalMode === 'edit' && selectedClient && selectedProject) {
-            setClients(prev => prev.map(c => c.id === selectedClient.id ? { ...c, name: formData.clientName, email: formData.email, phone: formData.phone, whatsapp: formData.whatsapp, instagram: formData.instagram, clientType: formData.clientType } : c));
+                await Promise.all([
+                    ClientService.update(selectedClient.id, clientUpdateData),
+                    ProjectService.update(selectedProject.id, projectUpdateData)
+                ]);
+
+                showNotification(`Data klien & proyek berhasil diperbarui.`);
+            }
             
-            setProjects(prev => prev.map(p => {
-                if (p.id === selectedProject.id) {
-                    const amountPaid = p.amountPaid; // Keep existing payment data
-                    const remainingPayment = totalProject - amountPaid;
-                    return {
-                        ...p,
-                        projectName: formData.projectName,
-                        projectType: formData.projectType,
-                        location: formData.location,
-                        date: formData.date,
-                        packageName: selectedPackage.name,
-                        packageId: selectedPackage.id,
-                        addOns: selectedAddOns,
-                        totalCost: totalProject,
-                        paymentStatus: amountPaid > 0 ? (remainingPayment <= 0 ? PaymentStatus.LUNAS : PaymentStatus.DP_TERBAYAR) : PaymentStatus.BELUM_BAYAR,
-                        notes: formData.notes,
-                        promoCodeId: formData.promoCodeId || undefined,
-                        discountAmount: finalDiscountAmount > 0 ? finalDiscountAmount : undefined,
-                    };
-                }
-                return p;
-            }));
-             showNotification(`Data klien & proyek berhasil diperbarui.`);
+            await reloadData();
+            handleCloseModal();
+
+        } catch (error) {
+            console.error("Failed to save data:", error);
+            showNotification(`Error: Gagal menyimpan data. ${(error as Error).message}`);
+        } finally {
+            setIsSubmitting(false);
         }
-        
-        handleCloseModal();
     };
     
-    const handleDeleteClient = (clientId: string) => {
-        if (window.confirm("Menghapus klien akan menghapus semua proyek dan transaksi terkait. Apakah Anda yakin?")) {
-            setClients(prev => prev.filter(c => c.id !== clientId));
-            const projectsToDelete = projects.filter(p => p.clientId === clientId).map(p => p.id);
-            setProjects(prev => prev.filter(p => p.clientId !== clientId));
-            setTransactions(prev => prev.filter(t => !projectsToDelete.includes(t.projectId || '')));
-            setIsDetailModalOpen(false);
-            showNotification("Klien berhasil dihapus.");
+    const handleDeleteClient = async (clientId: string) => {
+        if (window.confirm("Menghapus klien akan menghapus semua proyek dan transaksi terkait. Ini tidak dapat diurungkan. Apakah Anda yakin?")) {
+            try {
+                // Find all projects associated with the client
+                const projectsToDelete = projects.filter(p => p.clientId === clientId);
+                const projectIdsToDelete = projectsToDelete.map(p => p.id);
+
+                // Delete all associated projects in parallel
+                if (projectIdsToDelete.length > 0) {
+                    // Note: This assumes transactions are deleted via cascade from projects.
+                    // If not, we'd need to delete transactions for each project here.
+                    await Promise.all(projectIdsToDelete.map(id => ProjectService.delete(id)));
+                }
+
+                // After deleting associated projects, delete the client itself
+                await ClientService.delete(clientId);
+
+                showNotification("Klien dan data terkait berhasil dihapus.");
+
+                // Reload all data from the server
+                await reloadData();
+                setIsDetailModalOpen(false); // Close the detail modal
+
+            } catch (error) {
+                console.error("Failed to delete client:", error);
+                showNotification(`Error: Gagal menghapus klien. ${(error as Error).message}`);
+            }
         }
     };
 
-    const handleRecordPayment = (projectId: string, amount: number, destinationCardId: string) => {
+    const handleRecordPayment = async (projectId: string, amount: number, destinationCardId: string) => {
+        if (!vendorId) {
+            showNotification('Error: Pengguna tidak terautentikasi.');
+            return;
+        }
+
         const project = projects.find(p => p.id === projectId);
-        if (!project) return;
-    
-        const newTransaction: Transaction = {
-            id: `TRN-PAY-${Date.now()}`,
-            date: new Date().toISOString().split('T')[0],
-            description: `Pembayaran Proyek ${project.projectName}`,
-            amount: amount,
-            type: TransactionType.INCOME,
-            projectId: project.id,
-            category: 'Pelunasan Proyek',
-            method: 'Transfer Bank',
-            cardId: destinationCardId,
-        };
-    
-        setTransactions(prev => [...prev, newTransaction].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-        setCards(prev => prev.map(c => c.id === destinationCardId ? {...c, balance: c.balance + amount} : c));
-    
-        setProjects(prev => prev.map(p => {
-            if (p.id === project.id) {
-                const newAmountPaid = p.amountPaid + amount;
-                const remaining = p.totalCost - newAmountPaid;
-                return {
-                    ...p,
-                    amountPaid: newAmountPaid,
-                    paymentStatus: remaining <= 0 ? PaymentStatus.LUNAS : PaymentStatus.DP_TERBAYAR
-                };
-            }
-            return p;
-        }));
-    
-        showNotification('Pembayaran berhasil dicatat.');
-        addNotification({
-            title: 'Pembayaran Diterima',
-            message: `Pembayaran sebesar ${formatCurrency(amount)} untuk proyek "${project.projectName}" telah diterima.`,
-            icon: 'payment',
-            link: {
-                view: ViewType.CLIENTS,
-                action: { type: 'VIEW_CLIENT_DETAILS', id: project.clientId }
-            }
-        });
+        if (!project) {
+            showNotification('Error: Proyek tidak ditemukan.');
+            return;
+        }
+
+        try {
+            const newTransactionData: Omit<Transaction, 'id'> = {
+                date: new Date().toISOString().split('T')[0],
+                description: `Pembayaran Proyek ${project.projectName}`,
+                amount: amount,
+                type: TransactionType.INCOME,
+                projectId: project.id,
+                category: 'Pelunasan Proyek',
+                method: 'Transfer Bank',
+                cardId: destinationCardId,
+            };
+            await TransactionService.create(newTransactionData, vendorId);
+
+            const newAmountPaid = project.amountPaid + amount;
+            const remaining = project.totalCost - newAmountPaid;
+            const projectUpdateData: Partial<Project> = {
+                amountPaid: newAmountPaid,
+                paymentStatus: remaining <= 0 ? PaymentStatus.LUNAS : PaymentStatus.DP_TERBAYAR,
+            };
+            await ProjectService.update(project.id, projectUpdateData);
+
+            // Note: Card balance is only updated in local state as CardService is not yet implemented.
+            setCards(prev => prev.map(c => c.id === destinationCardId ? {...c, balance: c.balance + amount} : c));
+
+            showNotification('Pembayaran berhasil dicatat.');
+            addNotification({
+                title: 'Pembayaran Diterima',
+                message: `Pembayaran sebesar ${formatCurrency(amount)} untuk proyek "${project.projectName}" telah diterima.`,
+                icon: 'payment',
+                link: {
+                    view: ViewType.CLIENTS,
+                    action: { type: 'VIEW_CLIENT_DETAILS', id: project.clientId }
+                }
+            });
+
+            await reloadData();
+
+        } catch (error) {
+            console.error("Failed to record payment:", error);
+            showNotification(`Error: Gagal mencatat pembayaran. ${(error as Error).message}`);
+        }
     };
     
     const handleDownloadClients = () => {
@@ -1350,7 +1413,7 @@ const Clients: React.FC<ClientsProps> = ({ clients, setClients, projects, setPro
             </div>
     
             <Modal isOpen={isModalOpen} onClose={handleCloseModal} title={modalMode === 'add' ? (selectedClient ? 'Tambah Proyek Baru' : 'Tambah Klien & Proyek Baru') : 'Edit Klien & Proyek'} size="4xl">
-                <ClientForm formData={formData} handleFormChange={handleFormChange} handleFormSubmit={handleFormSubmit} handleCloseModal={handleCloseModal} packages={packages} addOns={addOns} userProfile={userProfile} modalMode={modalMode} cards={cards} promoCodes={promoCodes} />
+                <ClientForm formData={formData} handleFormChange={handleFormChange} handleFormSubmit={handleFormSubmit} handleCloseModal={handleCloseModal} packages={packages} addOns={addOns} userProfile={userProfile} modalMode={modalMode} cards={cards} promoCodes={promoCodes} isSubmitting={isSubmitting} />
             </Modal>
             
             <Modal isOpen={isDetailModalOpen} onClose={() => setIsDetailModalOpen(false)} title={`Detail Klien: ${clientForDetail?.name}`} size="4xl">

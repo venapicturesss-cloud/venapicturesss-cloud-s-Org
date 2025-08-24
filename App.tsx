@@ -162,6 +162,8 @@ interface MainAppProps {
   setRewardLedgerEntries: React.Dispatch<React.SetStateAction<RewardLedgerEntry[]>>;
   currentUser: User | null;
   handleLogout: () => void;
+  vendorId: string | null;
+  reloadData: () => void;
 }
 
 const MainApp: React.FC<MainAppProps> = ({
@@ -173,7 +175,7 @@ const MainApp: React.FC<MainAppProps> = ({
   socialMediaPosts, setSocialMediaPosts, promoCodes, setPromoCodes,
   sops, setSops, teamProjectPayments, setTeamProjectPayments,
   teamPaymentRecords, setTeamPaymentRecords, rewardLedgerEntries, setRewardLedgerEntries,
-  currentUser, handleLogout
+  currentUser, handleLogout, vendorId, reloadData
 }) => {
   const [activeView, setActiveView] = useState<ViewType>(ViewType.DASHBOARD);
   const [notification, setNotification] = useState<string>('');
@@ -393,6 +395,8 @@ const MainApp: React.FC<MainAppProps> = ({
           onSignInvoice={(pId, sig) => setProjects(prev => prev.map(p => p.id === pId ? { ...p, invoiceSignature: sig } : p))}
           onSignTransaction={(tId, sig) => setTransactions(prev => prev.map(t => t.id === tId ? { ...t, vendorSignature: sig } : t))}
           addNotification={addNotification}
+          vendorId={vendorId}
+          reloadData={reloadData}
         />;
       case ViewType.PROJECTS:
         return <Projects 

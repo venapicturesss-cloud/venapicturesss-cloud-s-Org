@@ -58,6 +58,8 @@ interface SupabaseDataManagerProps {
     setTeamPaymentRecords: React.Dispatch<React.SetStateAction<TeamPaymentRecord[]>>;
     rewardLedgerEntries: RewardLedgerEntry[];
     setRewardLedgerEntries: React.Dispatch<React.SetStateAction<RewardLedgerEntry[]>>;
+    vendorId: string | null;
+    reloadData: () => void;
   }) => React.ReactNode;
 }
 
@@ -308,6 +310,8 @@ const SupabaseDataManager: React.FC<SupabaseDataManagerProps> = ({ children }) =
     setTeamPaymentRecords,
     rewardLedgerEntries,
     setRewardLedgerEntries,
+    vendorId,
+    reloadData: loadData,
   });
 };
 
