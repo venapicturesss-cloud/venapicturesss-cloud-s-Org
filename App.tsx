@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { SupabaseProvider } from './context/SupabaseContext';
 import { ViewType, Client, Project, TeamMember, Transaction, Package, AddOn, TeamProjectPayment, Profile, FinancialPocket, TeamPaymentRecord, Lead, RewardLedgerEntry, User, Card, Asset, ClientFeedback, Contract, RevisionStatus, NavigationAction, Notification, SocialMediaPost, PromoCode, SOP, CardType, PocketType, VendorData } from './types';
 import { MOCK_USERS, DEFAULT_USER_PROFILE, MOCK_DATA, HomeIcon, FolderKanbanIcon, UsersIcon, DollarSignIcon, PlusIcon, lightenColor, darkenColor, hexToHsl } from './constants';
 import Sidebar from './components/Sidebar';
@@ -66,6 +67,14 @@ const BottomNavBar: React.FC<{ activeView: ViewType; handleNavigation: (view: Vi
 };
 
 const App: React.FC = () => {
+  return (
+    <SupabaseProvider>
+      <AppContent />
+    </SupabaseProvider>
+  );
+};
+
+const AppContent: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeView, setActiveView] = useState<ViewType>(ViewType.HOMEPAGE);
