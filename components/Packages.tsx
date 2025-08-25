@@ -1,6 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Package, AddOn, Project, PhysicalItem } from '../types';
+import { PackageService } from '../services/packageService';
+import { AddOnService } from '../services/addOnService';
 import PageHeader from './PageHeader';
 import Modal from './Modal';
 import { PencilIcon, Trash2Icon, PlusIcon, Share2Icon, FileTextIcon, CameraIcon } from '../constants';
@@ -27,6 +29,8 @@ interface PackagesProps {
     addOns: AddOn[];
     setAddOns: React.Dispatch<React.SetStateAction<AddOn[]>>;
     projects: Project[];
+    vendorId: string | null;
+    reloadData: () => void;
 }
 
 const toBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -37,12 +41,14 @@ const toBase64 = (file: File): Promise<string> => new Promise((resolve, reject) 
 });
 
 
-const Packages: React.FC<PackagesProps> = ({ packages, setPackages, addOns, setAddOns, projects }) => {
+const Packages: React.FC<PackagesProps> = ({ packages, setPackages, addOns, setAddOns, projects, vendorId, reloadData }) => {
   const [packageFormData, setPackageFormData] = useState(emptyPackageForm);
   const [packageEditMode, setPackageEditMode] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [addOnFormData, setAddOnFormData] = useState(emptyAddOnForm);
   const [addOnEditMode, setAddOnEditMode] = useState<string | null>(null);
+  const [isAddOnSubmitting, setIsAddOnSubmitting] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
 
@@ -127,7 +133,7 @@ const Packages: React.FC<PackagesProps> = ({ packages, setPackages, addOns, setA
     });
   }
 
-  const handlePackageDelete = (pkgId: string) => {
+  const handlePackageDelete = async (pkgId: string) => {
     const isPackageInUse = projects.some(p => p.packageId === pkgId);
     if (isPackageInUse) {
         alert("Paket ini tidak dapat dihapus karena sedang digunakan oleh satu atau lebih proyek. Hapus atau ubah proyek tersebut terlebih dahulu.");
@@ -135,38 +141,59 @@ const Packages: React.FC<PackagesProps> = ({ packages, setPackages, addOns, setA
     }
 
     if (window.confirm("Apakah Anda yakin ingin menghapus paket ini?")) {
-        setPackages(prev => prev.filter(p => p.id !== pkgId));
+        try {
+            await PackageService.delete(pkgId);
+            alert("Paket berhasil dihapus.");
+            await reloadData();
+        } catch (error) {
+            console.error("Failed to delete package:", error);
+            alert(`Error: Gagal menghapus paket. ${(error as Error).message}`);
+        }
     }
   }
 
-  const handlePackageSubmit = (e: React.FormEvent) => {
+  const handlePackageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!packageFormData.name || !packageFormData.price) {
         alert('Nama Paket dan Harga tidak boleh kosong.');
         return;
     }
-
-    const packageData: Omit<Package, 'id'> = {
-        name: packageFormData.name,
-        price: Number(packageFormData.price),
-        processingTime: packageFormData.processingTime,
-        photographers: packageFormData.photographers,
-        videographers: packageFormData.videographers,
-        physicalItems: packageFormData.physicalItems
-            .filter(item => item.name.trim() !== '')
-            .map(item => ({ ...item, price: Number(item.price || 0) })),
-        digitalItems: packageFormData.digitalItems.filter(item => item.trim() !== ''),
-        coverImage: packageFormData.coverImage,
-    };
-    
-    if (packageEditMode) {
-        setPackages(prev => prev.map(p => p.id === packageEditMode ? { ...p, ...packageData } : p));
-    } else {
-        const newPackage: Package = { ...packageData, id: `PKG${Date.now()}` };
-        setPackages(prev => [...prev, newPackage]);
+    if (!vendorId) {
+        alert('Error: Pengguna tidak terautentikasi.');
+        return;
     }
 
-    handlePackageCancelEdit();
+    setIsSubmitting(true);
+    try {
+        const packageData: Omit<Package, 'id'> = {
+            name: packageFormData.name,
+            price: Number(packageFormData.price),
+            processingTime: packageFormData.processingTime,
+            photographers: packageFormData.photographers,
+            videographers: packageFormData.videographers,
+            physicalItems: packageFormData.physicalItems
+                .filter(item => item.name.trim() !== '')
+                .map(item => ({ ...item, price: Number(item.price || 0) })),
+            digitalItems: packageFormData.digitalItems.filter(item => item.trim() !== ''),
+            coverImage: packageFormData.coverImage,
+        };
+
+        if (packageEditMode) {
+            await PackageService.update(packageEditMode, packageData);
+            alert('Paket berhasil diperbarui.');
+        } else {
+            await PackageService.create(packageData, vendorId);
+            alert('Paket baru berhasil ditambahkan.');
+        }
+
+        await reloadData();
+        handlePackageCancelEdit();
+    } catch (error) {
+        console.error("Failed to save package:", error);
+        alert(`Error: Gagal menyimpan paket. ${(error as Error).message}`);
+    } finally {
+        setIsSubmitting(false);
+    }
   };
 
   // --- AddOn Handlers ---
@@ -188,38 +215,59 @@ const Packages: React.FC<PackagesProps> = ({ packages, setPackages, addOns, setA
     });
   }
 
-  const handleAddOnDelete = (addOnId: string) => {
+  const handleAddOnDelete = async (addOnId: string) => {
     const isAddOnInUse = projects.some(p => p.addOns.some(a => a.id === addOnId));
     if (isAddOnInUse) {
-        alert("Add-on ini tidak dapat dihapus karena sedang digunakan oleh satu atau lebih proyek. Hapus atau ubah proyek tersebut terlebih dahulu.");
+        alert("Add-on ini tidak dapat dihapus karena sedang digunakan oleh satu atau lebih proyek.");
         return;
     }
 
     if (window.confirm("Apakah Anda yakin ingin menghapus add-on ini?")) {
-        setAddOns(prev => prev.filter(a => a.id !== addOnId));
+        try {
+            await AddOnService.delete(addOnId);
+            alert("Add-on berhasil dihapus.");
+            await reloadData();
+        } catch (error) {
+            console.error("Failed to delete add-on:", error);
+            alert(`Error: Gagal menghapus add-on. ${(error as Error).message}`);
+        }
     }
   }
 
-  const handleAddOnSubmit = (e: React.FormEvent) => {
+  const handleAddOnSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addOnFormData.name || !addOnFormData.price) {
         alert('Nama Add-On dan Harga tidak boleh kosong.');
         return;
     }
-
-    const addOnData: Omit<AddOn, 'id'> = {
-        name: addOnFormData.name,
-        price: Number(addOnFormData.price),
-    };
-    
-    if (addOnEditMode) {
-        setAddOns(prev => prev.map(a => a.id === addOnEditMode ? { ...a, ...addOnData } : a));
-    } else {
-        const newAddOn: AddOn = { ...addOnData, id: `ADD${Date.now()}` };
-        setAddOns(prev => [...prev, newAddOn]);
+    if (!vendorId) {
+        alert('Error: Pengguna tidak terautentikasi.');
+        return;
     }
 
-    handleAddOnCancelEdit();
+    setIsAddOnSubmitting(true);
+    try {
+        const addOnData: Omit<AddOn, 'id'> = {
+            name: addOnFormData.name,
+            price: Number(addOnFormData.price),
+        };
+
+        if (addOnEditMode) {
+            await AddOnService.update(addOnEditMode, addOnData);
+            alert('Add-on berhasil diperbarui.');
+        } else {
+            await AddOnService.create(addOnData, vendorId);
+            alert('Add-on baru berhasil ditambahkan.');
+        }
+
+        await reloadData();
+        handleAddOnCancelEdit();
+    } catch (error) {
+        console.error("Failed to save add-on:", error);
+        alert(`Error: Gagal menyimpan add-on. ${(error as Error).message}`);
+    } finally {
+        setIsAddOnSubmitting(false);
+    }
   };
 
 
@@ -278,8 +326,10 @@ const Packages: React.FC<PackagesProps> = ({ packages, setPackages, addOns, setA
                 </div>
 
                 <div className="text-right space-x-2 pt-2">
-                    {packageEditMode && (<button type="button" onClick={handlePackageCancelEdit} className="button-secondary">Batal</button>)}
-                    <button type="submit" className="button-primary">{packageEditMode ? 'Update Paket' : 'Simpan Paket'}</button>
+                    {packageEditMode && (<button type="button" onClick={handlePackageCancelEdit} className="button-secondary" disabled={isSubmitting}>Batal</button>)}
+                    <button type="submit" className="button-primary" disabled={isSubmitting}>
+                        {isSubmitting ? 'Menyimpan...' : (packageEditMode ? 'Update Paket' : 'Simpan Paket')}
+                    </button>
                 </div>
             </form>
         </div>
@@ -359,8 +409,10 @@ const Packages: React.FC<PackagesProps> = ({ packages, setPackages, addOns, setA
                         <div className="input-group"><input type="text" name="name" value={addOnFormData.name} onChange={handleAddOnInputChange} className="input-field" placeholder=" " required/><label className="input-label">Nama Add-On</label></div>
                         <div className="input-group"><input type="number" name="price" value={addOnFormData.price} onChange={handleAddOnInputChange} className="input-field" placeholder=" " required/><label className="input-label">Harga (IDR)</label></div>
                         <div className="text-right space-x-2 pt-2">
-                            {addOnEditMode && (<button type="button" onClick={handleAddOnCancelEdit} className="button-secondary">Batal</button>)}
-                            <button type="submit" className="button-primary">{addOnEditMode ? 'Update Add-On' : 'Simpan Add-On'}</button>
+                            {addOnEditMode && (<button type="button" onClick={handleAddOnCancelEdit} className="button-secondary" disabled={isAddOnSubmitting}>Batal</button>)}
+                            <button type="submit" className="button-primary" disabled={isAddOnSubmitting}>
+                                {isAddOnSubmitting ? 'Menyimpan...' : (addOnEditMode ? 'Update Add-On' : 'Simpan Add-On')}
+                            </button>
                         </div>
                     </form>
                 </div>

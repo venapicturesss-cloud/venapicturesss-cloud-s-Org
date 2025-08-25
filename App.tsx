@@ -453,7 +453,7 @@ const MainApp: React.FC<MainAppProps> = ({
           rewardLedgerEntries={rewardLedgerEntries}
         />;
       case ViewType.PACKAGES:
-        return <Packages packages={packages} setPackages={setPackages} addOns={addOns} setAddOns={setAddOns} projects={projects} />;
+        return <Packages packages={packages} setPackages={setPackages} addOns={addOns} setAddOns={setAddOns} projects={projects} vendorId={vendorId} reloadData={reloadData} />;
       case ViewType.ASSETS:
         return <Assets assets={assets} setAssets={setAssets} profile={profile} showNotification={showNotification} />;
       case ViewType.CONTRACTS:
