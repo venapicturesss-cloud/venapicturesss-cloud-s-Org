@@ -440,6 +440,8 @@ const MainApp: React.FC<MainAppProps> = ({
             cards={cards}
             setCards={setCards}
             onSignPaymentRecord={(rId, sig) => setTeamPaymentRecords(prev => prev.map(r => r.id === rId ? { ...r, vendorSignature: sig } : r))}
+            vendorId={vendorId}
+            reloadData={reloadData}
           />
         );
       case ViewType.FINANCE:
